@@ -87,8 +87,6 @@ namespace Microsoft.ML.AutoML
                 _timer.AutoReset = true;
                 _logger?.Trace($"{typeof(DefaultPerformanceMonitor)} has been started");
             }
-
-            // trigger the PerformanceMetricsUpdated event and (re)start the timer
             _timer.Enabled = false;
             SampleCpuAndMemoryUsage();
             _timer.Enabled = true;
@@ -97,6 +95,7 @@ namespace Microsoft.ML.AutoML
         public void Pause()
         {
             _timer.Enabled = false;
+            SampleCpuAndMemoryUsage();
         }
 
         public void Stop()
