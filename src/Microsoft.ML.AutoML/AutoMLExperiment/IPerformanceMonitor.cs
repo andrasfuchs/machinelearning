@@ -46,6 +46,9 @@ namespace Microsoft.ML.AutoML
         private double? _peakMemoryUsage;
         private readonly int _checkIntervalInMilliseconds;
         private TimeSpan _totalCpuProcessorTime;
+        private DateTime _previousSamplingUtcTime;
+        private static readonly object _lock = new object();
+
 
         public DefaultPerformanceMonitor(AutoMLExperiment.AutoMLExperimentSettings settings, IChannel logger, int checkIntervalInMilliseconds)
         {
@@ -79,12 +82,11 @@ namespace Microsoft.ML.AutoML
             {
                 _timer = new Timer(_checkIntervalInMilliseconds);
                 _totalCpuProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
+                _previousSamplingUtcTime = DateTime.UtcNow;
                 _timer.Elapsed += OnCheckCpuAndMemoryUsage;
                 _timer.AutoReset = true;
                 _logger?.Trace($"{typeof(DefaultPerformanceMonitor)} has been started");
             }
-
-            // trigger the PerformanceMetricsUpdated event and (re)start the timer
             _timer.Enabled = false;
             SampleCpuAndMemoryUsage();
             _timer.Enabled = true;
@@ -93,6 +95,7 @@ namespace Microsoft.ML.AutoML
         public void Pause()
         {
             _timer.Enabled = false;
+            SampleCpuAndMemoryUsage();
         }
 
         public void Stop()
@@ -119,28 +122,33 @@ namespace Microsoft.ML.AutoML
             // the % of CPU usage by current process is simply currentCpuProcessorTime / total CPU time.
             using (var process = Process.GetCurrentProcess())
             {
-                var currentCpuProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
-                var elapseCpuProcessorTime = currentCpuProcessorTime - _totalCpuProcessorTime;
-                var cpuUsedMs = elapseCpuProcessorTime.TotalMilliseconds;
-                var cpuUsageInTotal = cpuUsedMs / (Environment.ProcessorCount * _checkIntervalInMilliseconds);
-                _totalCpuProcessorTime = currentCpuProcessorTime;
-                _peakCpuUsage = Math.Max(cpuUsageInTotal, _peakCpuUsage ?? 0);
-
-                // calculate Memory Usage in MB
-                var memoryUsage = process.PrivateMemorySize64 * 1.0 / (1024 * 1024);
-                _peakMemoryUsage = Math.Max(memoryUsage, _peakMemoryUsage ?? 0);
-
-                var metrics = new TrialPerformanceMetrics()
+                lock (_lock)
                 {
-                    CpuUsage = cpuUsageInTotal,
-                    MemoryUsage = memoryUsage,
-                    PeakCpuUsage = _peakCpuUsage,
-                    PeakMemoryUsage = _peakMemoryUsage
-                };
+                    var currentUtc = DateTime.UtcNow;
+                    var currentCpuProcessorTime = process.TotalProcessorTime;
+                    var elapseCpuProcessorTime = currentCpuProcessorTime - _totalCpuProcessorTime;
+                    var cpuUsedMs = elapseCpuProcessorTime.TotalMilliseconds;
+                    var cpuUsageInTotal = cpuUsedMs / (Environment.ProcessorCount * (currentUtc - _previousSamplingUtcTime).TotalMilliseconds);
+                    _totalCpuProcessorTime = currentCpuProcessorTime;
+                    _previousSamplingUtcTime = currentUtc;
+                    _peakCpuUsage = Math.Max(cpuUsageInTotal, _peakCpuUsage ?? 0);
 
-                _logger?.Trace($"current CPU: {cpuUsageInTotal}, current Memory(mb): {memoryUsage}");
+                    // calculate Memory Usage in MB
+                    var memoryUsage = process.PrivateMemorySize64 * 1.0 / (1024 * 1024);
+                    _peakMemoryUsage = Math.Max(memoryUsage, _peakMemoryUsage ?? 0);
 
-                PerformanceMetricsUpdated?.Invoke(this, metrics);
+                    var metrics = new TrialPerformanceMetrics()
+                    {
+                        CpuUsage = cpuUsageInTotal,
+                        MemoryUsage = memoryUsage,
+                        PeakCpuUsage = _peakCpuUsage,
+                        PeakMemoryUsage = _peakMemoryUsage
+                    };
+
+                    _logger?.Trace($"current CPU: {cpuUsageInTotal}, current Memory(mb): {memoryUsage}");
+
+                    PerformanceMetricsUpdated?.Invoke(this, metrics);
+                }
             }
         }
 

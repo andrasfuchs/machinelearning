@@ -273,14 +273,13 @@ namespace Microsoft.ML.AutoML
                             performanceMonitor.Start();
                             logger.Trace($"trial setting - {JsonSerializer.Serialize(trialSettings)}");
                             var trialResult = await trialTask;
-
+                            performanceMonitor.Pause();
                             var peakCpu = performanceMonitor?.GetPeakCpuUsage();
                             var peakMemoryInMB = performanceMonitor?.GetPeakMemoryUsageInMegaByte();
                             trialResult.PeakCpu = peakCpu;
                             trialResult.PeakMemoryInMegaByte = peakMemoryInMB;
                             trialResult.TrialSettings.EndedAtUtc = DateTime.UtcNow;
 
-                            performanceMonitor.Pause();
                             monitor?.ReportCompletedTrial(trialResult);
                             tuner.Update(trialResult);
                             trialResultManager?.AddOrUpdateTrialResult(trialResult);
